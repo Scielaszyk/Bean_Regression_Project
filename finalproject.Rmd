@@ -1,0 +1,223 @@
+---
+title: "Final Project"
+author: "Sara Cielaszyk"
+date: "2023-11-03"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+### This is just to read the excel file into R if you need to
+library("readxl")
+library('tidyverse')
+library('car')
+library('ggcorrplot')
+library('dplyr')
+library('bestglm')
+beans<-read_excel("Dry_Bean_Dataset.xlsx")
+
+beans
+# Make full model for area
+area_mod<-lm(Area~., beans)
+summary(area_mod)
+beans
+
+# Check collinearity
+var_inf<-vif(area_mod)
+var_inf
+mean(var_inf)
+
+# Check for Correlation
+quant = subset(beans, select = -c(Class))
+quant
+cor(quant)
+ggcorrplot(cor(quant))
+
+b = beans%>% filter(Class != 'BOMBAY')
+b
+
+# full model
+
+lmodfull<-lm(Area~., beans)
+summary(lmodfull)
+r = resid(lmodfull)
+f = fitted(lmodfull)
+plot(f,r, pch=unclass(beans$Class))
+
+v =vif(lmodfull)
+v
+mean(v)
+
+# removes some correlated variables
+lmod<-lm(Area~(Extent) + (Solidity)+(roundness)+(Perimeter)+(Eccentricity) + (AspectRation), b)
+summary(lmod)
+r = resid(lmod)
+f = fitted(lmod)
+plot(f,r, pch=unclass(beans$Class))
+
+v =vif(lmod)
+v
+mean(v)
+
+# just class and area
+lmodc<-lm(Area^(1/2) ~ Class + Perimeter, b)
+summary(lmodc)
+r = resid(lmodc)
+f = fitted(lmodc)
+plot(f,r, pch=unclass(b$Class))
+
+```
+
+
+
+
+
+```{r FINAL}
+beansn= beans%>% filter(Class != 'BOMBAY')
+lmodfull<-lm(Area^(1/2)~ Class + (Extent) + (Solidity)+(roundness)+(Perimeter)+(Eccentricity) + (AspectRation), beansn)
+summary(lmodfull)
+residuals = resid(lmodfull)
+fitted_values = fitted(lmodfull)
+plot(fitted_values,residuals, pch=unclass(beansn$Class), main = 'Full Model')
+
+qqnorm(residuals)
+qqline(residuals)
+
+# This lead us to remove the bean type of bombay and rerun
+
+quant = subset(beans, select = -c(Class))
+gn = quant[-c(3,4,7,8,12,13,14,15,16)]
+summary(gn)
+apply(gn,2,sd)
+as.factor(beansn$Class)
+
+
+
+
+
+```
+
+```{r}
+beansn
+lmodfull = lm(Area^(1/2)~ Class +(Extent) + (Solidity)+(roundness)+(Perimeter)+(Eccentricity) + (AspectRation), beansn)
+
+redmod = lm(Area^(1/2)~Class + (Solidity)+(roundness)+(Perimeter)+(Eccentricity) + (AspectRation), beansn)
+
+beanh= beans%>% filter(Class == 'HOROZ')
+quanth =subset(beanh, select = -c(Class))
+apply(quanth,2,mean)
+
+# Confidence intervals
+x0<-data.frame('Class'='HOROZ' , 'Extent'= .706,'Solidity' = .985,'roundness'= .7944,'Perimeter'=919.85 ,'Eccentricity' =.867 , 'AspectRation' = 2.026)
+x0
+predict(lmodfull,new=x0,interval="confidence")
+
+x1<-x0[-c(2)]
+x1
+predict(redmod,new=x1,interval="confidence")
+
+# prediction interval
+summary(quanth)
+
+x0<-data.frame('Class'='HOROZ' , 'Extent'= .99,'Solidity' = .90,'roundness'= .99,'Perimeter'=2000 ,'Eccentricity' =.99 , 'AspectRation' = 3)
+x0
+predict(lmodfull,new=x0,interval="predict")
+
+x1<-x0[-c(2)]
+x1
+predict(redmod,new=x1,interval="predict")
+```
+
+$\hat{Area}$ =-115.4 +  1.04$C_{Cali}$ - 1.385$C_{Dermason}$ +.5042$C_{Horoz}$ -.652$C_{Seker}$ +.279$C_{Sira}$ - .1593(extent) - 10.5(solidity)+ 141.0(roundness) + .2583(Perimeter) + 11.55(eccentricity) - 1.606(aspectration)
+
+```{r}
+library(nnet)
+library(hnp)
+library(dplyr)
+
+sorted_beans <- beans %>%
+  arrange(Class, Area)
+
+mean_areas <- sorted_beans %>%
+  group_by(Class) %>%
+  summarise(mean_area = mean(Area))
+
+sorted_classes <- mean_areas %>%
+  arrange(mean_area) %>%
+  pull(Class)
+
+sorted_beans$Class <- factor(sorted_beans$Class, levels = sorted_classes)
+sorted_beans$ClassN <- as.numeric(sorted_beans$Class)
+
+# test train split 70/30
+set.seed(456)
+
+total_rows <- nrow(sorted_beans)
+
+train_indices <- sample(seq_len(total_rows), 0.7 * total_rows)
+
+train_data <- sorted_beans[train_indices, ]
+test_data <- sorted_beans[-train_indices, ]
+
+# multinomial model
+multinom_model <- multinom(ClassN ~ Solidity + roundness +
+                             Perimeter + Eccentricity + AspectRation,
+                           data = train_data)
+
+summary(multinom_model)
+
+test_data$PredClassN <- predict(multinom_model,
+                                   newdata = test_data, type = "class")
+
+test_data$CorrectPrediction <-
+  ifelse(test_data$ClassN == test_data$PredClassN, TRUE, FALSE)
+
+# accuracy
+sum(test_data$CorrectPrediction)/nrow(test_data)
+attach(test_data)
+# accuracy for each bean type plot
+
+prediction_summary <- sorted_beans %>%
+  group_by(ClassN) %>%
+  summarise(Correct_Percentage = mean(CorrectPrediction) * 100,
+    Incorrect_Percentage = (1 - mean(CorrectPrediction)) * 100)
+
+classes <- unique(sorted_beans[c("ClassN", "Class")])
+
+prediction_summary_long <- prediction_summary %>%
+  pivot_longer(cols = c(Correct_Percentage, Incorrect_Percentage),
+               names_to = "Prediction_Type", values_to = "Percentage")
+
+prediction_summary_long <- prediction_summary_long %>%
+  left_join(classes, by = "ClassN")
+
+ggplot(prediction_summary_long, aes(x = Class, y = Percentage,
+                                    fill = Prediction_Type)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(title = "Percentage of Correct vs Incorrect Predictions by Bean Type",
+       x = "Bean Type",
+       y = "Percentage") +
+  scale_fill_manual(values = c("#66CC66", "#FF6666"),
+                    labels = c("Correct", "Incorrect")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+
+```
+```{r}
+
+# half normal plot
+h = hnp(multinom_model)
+plot(h)
+# fitted vs residual
+fits = fitted(multinom_model)
+resids = resid(multinom_model)
+plot(fits, resids)
+
+
+```
+
